@@ -99,7 +99,7 @@ def _find_mapping_row(mapping_df, mrn_value, accession_value):
         f"No mapping found for MRN {mrn_value or 'N/A'} or Accession {accession_value or 'N/A'}"
     )
 
-def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, new_id, accession_map=None):
+def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, new_id, accession_map=None, match_status=None):
     """
     Rebuild directory structure, preserving hierarchy but replacing:
     - MRN directory names with new_id
@@ -115,7 +115,9 @@ def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, n
     
     # Debug: show the original path structure
     print(f"      Original path parts: {parts}")
-    print(f"      MRN={mrn}, Accession={accession}, new_id={new_id}")
+    mrn_trusted = bool(match_status and match_status.startswith("mrn:"))
+    print(f"      MRN={mrn}, Accession={accession}, new_id={new_id}, match_status={match_status}")
+    print(f"      MRN trusted for dir match: {mrn_trusted}")
     
     for i, part in enumerate(parts):
         original_part = part
@@ -124,7 +126,7 @@ def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, n
             new_parts.append(part)
             print(f"        [{i}] {original_part:20s} → {part:20s} (DICOM file)")
         # Check if part exactly matches MRN
-        elif mrn and part == str(mrn):
+        elif mrn_trusted and mrn and part == str(mrn):
             new_parts.append(new_id)
             print(f"        [{i}] {original_part:20s} → {new_id:20s} (MRN match)")
         # Check if part is an accession directory (use map if available)
@@ -359,7 +361,7 @@ def main():
                     ds_temp = pydicom.dcmread(str(raw_path))
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
-                    row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
+                    row_temp, status_temp = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
                     patient_id_temp = _clean_string(_get_column_case_insensitive(row_temp, 'New_Patient_ID'))
                     
                     # Lookup accession number from map
@@ -373,8 +375,8 @@ def main():
                     # Rebuild output path with accession map
                     print(f"    Calling _rebuild_directory_path with:")
                     print(f"      input_file: {raw_path.relative_to(input_root)}")
-                    print(f"      mrn={mrn_temp}, accession={accession_temp}, new_id={patient_id_temp}")
-                    target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, accession_map)
+                    print(f"      mrn={mrn_temp}, accession={accession_temp}, new_id={patient_id_temp}, match_status={status_temp}")
+                    target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, accession_map, status_temp)
                     print(f"    Result: {target_path.relative_to(output_root)}\n")
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     
