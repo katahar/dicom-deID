@@ -17,6 +17,17 @@ def log_event(log_path, data):
     with open(log_path, 'a') as f:
         f.write(f"{datetime.now().isoformat()},{data['file']},{data['mrn']},{data['id']},{data['offset']},{data['status']}\n")
 
+def _get_column_case_insensitive(row, col_name):
+    """
+    Get a value from a pandas Series (row), matching column name case-insensitively.
+    Returns the value if found, None otherwise.
+    """
+    col_lower = col_name.lower()
+    for col in row.index:
+        if col.lower() == col_lower:
+            return row[col]
+    return None
+
 def _normalize_value(value):
     if value is None:
         return None
@@ -172,13 +183,25 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
         row, _ = _find_mapping_row(mapping_df, mrn, accession)
         
         # 2. Setup IDs and Dates
-        new_id = str(row['New_Patient_ID'])
+        # Use case-insensitive lookup for all required columns
+        new_id_val = _get_column_case_insensitive(row, 'New_Patient_ID')
+        if new_id_val is None:
+            raise ValueError(f"Column 'New_Patient_ID' not found in CSV. Available columns: {list(row.index)}")
+        new_id = str(new_id_val)
         new_accession = f"{new_id}_{scan_number}"
-        actual_surgery = pd.to_datetime(row['Surgery_Date'])
-        anchor_val = row.get('Anchor_Date')
+        
+        surgery_date_val = _get_column_case_insensitive(row, 'Surgery_Date')
+        if surgery_date_val is None:
+            raise ValueError(f"Column 'Surgery_Date' not found in CSV. Available columns: {list(row.index)}")
+        actual_surgery = pd.to_datetime(surgery_date_val)
+        
+        # Get Anchor_Date with case-insensitive lookup, default if not found
+        anchor_val = _get_column_case_insensitive(row, 'Anchor_Date')
         project_anchor = pd.to_datetime(anchor_val) if pd.notnull(anchor_val) else datetime(2024, 6, 15)
-        notes = row.get('Notes', '') or ''
-        notes = str(notes).strip()
+        
+        # Get Notes with case-insensitive lookup
+        notes = _get_column_case_insensitive(row, 'Notes')
+        notes = str(notes).strip() if pd.notnull(notes) else ''
         
         # 3. Calculate Temporal Offset
         study_date_str = ds.StudyDate
@@ -267,7 +290,7 @@ def main():
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
                     row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
-                    patient_id_temp = str(row_temp['New_Patient_ID'])
+                    patient_id_temp = str(_get_column_case_insensitive(row_temp, 'New_Patient_ID'))
                     new_accession_temp = f"{patient_id_temp}_1"  # Placeholder for first pass
                     
                     # Rebuild output path with anonymized identifiers
