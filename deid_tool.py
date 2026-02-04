@@ -28,6 +28,39 @@ def _get_column_case_insensitive(row, col_name):
             return row[col]
     return None
 
+def _get_value_str(row, col_name):
+    value = _get_column_case_insensitive(row, col_name)
+    if pd.isnull(value):
+        return None
+    value_str = str(value).strip()
+    return value_str if value_str else None
+
+def _build_patient_id(row):
+    long_prefix = _get_value_str(row, "Long_Prefix")
+    patient_number = _get_value_str(row, "Patient_Number")
+    if long_prefix and patient_number:
+        return f"{long_prefix}{patient_number}"
+
+    legacy_id = _get_value_str(row, "New_Patient_ID")
+    if legacy_id:
+        return legacy_id
+
+    raise ValueError(
+        "Missing patient identifier fields. Provide Long_Prefix + Patient_Number or New_Patient_ID."
+    )
+
+def _build_accession_base(row, patient_id):
+    short_prefix = _get_value_str(row, "Short_Prefix")
+    patient_number = _get_value_str(row, "Patient_Number")
+    if short_prefix and patient_number:
+        return f"{short_prefix}{patient_number}"
+
+    legacy_prefix = _get_value_str(row, "Accession_Prefix")
+    if legacy_prefix:
+        return legacy_prefix
+
+    return patient_id
+
 def _normalize_value(value):
     if value is None:
         return None
@@ -183,12 +216,15 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
         row, _ = _find_mapping_row(mapping_df, mrn, accession)
         
         # 2. Setup IDs and Dates
-        # Use case-insensitive lookup for all required columns
-        new_id_val = _get_column_case_insensitive(row, 'New_Patient_ID')
-        if new_id_val is None:
-            raise ValueError(f"Column 'New_Patient_ID' not found in CSV. Available columns: {list(row.index)}")
-        new_id = str(new_id_val)
-        new_accession = f"{new_id}_{scan_number}"
+        new_id = _build_patient_id(row)
+        accession_base = _build_accession_base(row, new_id)
+
+        # Create accession number and truncate to 16 chars (DICOM SH VR limit)
+        new_accession = f"{accession_base}_{scan_number}"
+        if len(new_accession) > 16:
+            # Truncate intelligently: keep prefix as much as possible, then add scan number
+            max_prefix_len = 16 - len(str(scan_number)) - 1  # -1 for underscore
+            new_accession = accession_base[:max_prefix_len] + f"_{scan_number}"
         
         surgery_date_val = _get_column_case_insensitive(row, 'Surgery_Date')
         if surgery_date_val is None:
@@ -292,7 +328,7 @@ def main():
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
                     row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
-                    patient_id_temp = str(_get_column_case_insensitive(row_temp, 'New_Patient_ID'))
+                    patient_id_temp = _build_patient_id(row_temp)
                     new_accession_temp = f"{patient_id_temp}_1"  # Placeholder for first pass
                     
                     # Rebuild output path with anonymized identifiers

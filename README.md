@@ -31,7 +31,10 @@ Create an Excel sheet and save it as a .csv file. This is your "key" to link rea
 |--------|---------|-------------|
 | MRN (or first column) | 12345 | The original Patient ID found in the raw scans. Can be in any column name. |
 | Accession (or second column) | ACC001 | The original Accession Number found in the raw scans. Can be in any column name. |
-| New_Patient_ID | RS_01 | The anonymous name you want to give them (e.g., RS_Vessel_01). |
+| Long_Prefix | RS_Vessel_ | Long prefix for the patient ID (e.g., RS_Vessel_). |
+| Short_Prefix | RSV | Short prefix for the accession number (e.g., RSV). |
+| Patient_Number | 0001 | Shared numeric ID appended to both prefixes. |
+| New_Patient_ID | RS_Vessel_0001 | (Optional legacy) Full anonymous patient ID if you are not using prefix+number. |
 | Surgery_Date | 2025-01-10 | The actual date of their surgery (YYYY-MM-DD). |
 | Anchor_Date | 2024-06-15 | (Optional) The "fake" surgery date for your project. If left blank, it defaults to June 15, 2024. |
 | Notes | Study notes here | (Optional) Additional notes about the patient or scan. Will be embedded in DICOM metadata and saved as notes.txt. |
@@ -85,7 +88,7 @@ Once the script starts, it will:
 
 **Anonymize**: Strip out the name and IDs, replacing them with the research ID from your CSV.
 
-**Assign Accession**: Generate a new Accession Number as `New_Patient_ID_ScanNumber` (e.g., `RS_01_1` for the first scan of patient RS_01).
+**Assign Accession**: Generate a new Accession Number as `Short_Prefix+Patient_Number_ScanNumber` (e.g., `RSV0001_1`). If `Short_Prefix`/`Patient_Number` are missing, it falls back to `Accession_Prefix` or `New_Patient_ID`.
 
 **Add Notes**: If a Notes column exists, embed the notes in the DICOM's PatientComments field (tagged with `IMPORT_NOTES:`) and save them to `notes.txt` in the output directory.
 
