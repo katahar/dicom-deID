@@ -82,6 +82,85 @@ def _find_mapping_row(mapping_df, mrn_value, accession_value):
         f"No mapping found for MRN {mrn_value or 'N/A'} or Accession {accession_value or 'N/A'}"
     )
 
+def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, new_id, new_accession, parent_dir_map=None):
+    """
+    Rebuild directory structure, replacing:
+    - MRN values with new_id
+    - Accession values with new_accession
+    - Directory parts containing underscores (likely patient names) with new_id
+    - Sibling directories to MRN/Accession folders with new_id+"_other_session"
+    - Other parts are preserved as-is
+    
+    parent_dir_map: dict mapping original parent directory paths to {"mrn": mrn, "accession": acc, "new_id": id, "sibling_dirs": [...]}
+    """
+    rel_path = raw_path.relative_to(input_root)
+    parts = list(rel_path.parts)
+    new_parts = []
+    
+    for i, part in enumerate(parts):
+        # Check if this part is the filename (last part with .dcm)
+        if part.lower().endswith('.dcm'):
+            new_parts.append(part)
+        # Check if part exactly matches MRN or Accession
+        elif mrn and part == str(mrn):
+            new_parts.append(new_id)
+        elif accession and part == str(accession):
+            new_parts.append(new_accession)
+        # Check if part looks like a patient name (contains underscores and alphanumerics)
+        elif '_' in part and any(c.isalpha() for c in part):
+            new_parts.append(new_id)
+        # Check if this directory is a sibling to MRN/Accession directory
+        elif parent_dir_map:
+            # Check if this is a "sibling" directory at the same level as MRN/Accession
+            parent_path_so_far = input_root / Path(*parts[:i])
+            if str(parent_path_so_far) in parent_dir_map:
+                map_entry = parent_dir_map[str(parent_path_so_far)]
+                if part in map_entry.get("sibling_dirs", []):
+                    new_parts.append(f"{map_entry['new_id']}_other_session")
+                else:
+                    new_parts.append(part)
+            else:
+                new_parts.append(part)
+        # Keep all other parts as-is
+        else:
+            new_parts.append(part)
+    
+    return output_root / Path(*new_parts)
+
+def _build_directory_map(input_root):
+    """
+    Scan input directory to identify scan location folders and their siblings.
+    Returns a map of parent directories to their MRN/Accession info and sibling folders.
+    """
+    dir_map = {}
+    
+    # Find all DICOM files and their parent directories
+    for root, dirs, files in os.walk(input_root):
+        for file in files:
+            if file.lower().endswith('.dcm'):
+                file_path = Path(root) / file
+                rel_path = file_path.relative_to(input_root)
+                
+                # The parent directory containing the DICOM
+                parent_dir = Path(root)
+                parent_rel = parent_dir.relative_to(input_root)
+                
+                # Get the grandparent directory (one level up from immediate parent)
+                if len(parent_rel.parts) > 0:
+                    grandparent_path = input_root / Path(*parent_rel.parts[:-1]) if len(parent_rel.parts) > 1 else input_root
+                    
+                    # Track this directory and get its siblings
+                    gp_str = str(grandparent_path)
+                    if gp_str not in dir_map:
+                        # Get all subdirectories in grandparent
+                        try:
+                            siblings = [d for d in os.listdir(grandparent_path) if os.path.isdir(os.path.join(grandparent_path, d))]
+                            dir_map[gp_str] = {"sibling_dirs": siblings, "mrn": None, "accession": None, "new_id": None}
+                        except:
+                            pass
+    
+    return dir_map
+
 def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
     try:
         # Load the file
@@ -165,6 +244,10 @@ def main():
     output_root = Path(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
     log_path = setup_logging(args.output)
+    input_root = Path(args.input)
+    
+    # Build directory map to identify sibling directories
+    parent_dir_map = _build_directory_map(input_root)
     
     # Summary Counters
     stats = {"success": 0, "fail": 0, "unique_patients": set()}
@@ -177,23 +260,42 @@ def main():
         for file in files:
             if file.lower().endswith('.dcm'):
                 raw_path = Path(root) / file
-                rel_path = raw_path.relative_to(args.input)
-                target_path = output_root / rel_path
-                target_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                # First pass to get patient ID
-                success, patient_id = process_dicom(str(raw_path), str(target_path), mapping_df, log_path, 1)
-                
-                if success:
-                    # Update scan count and re-process with correct scan number
-                    patient_scan_count[patient_id] = patient_scan_count.get(patient_id, 0) + 1
-                    scan_number = patient_scan_count[patient_id]
-                    success, patient_id = process_dicom(str(raw_path), str(target_path), mapping_df, log_path, scan_number)
-                
-                if success:
-                    stats["success"] += 1
-                    stats["unique_patients"].add(patient_id)
-                else:
+                # First pass: determine patient ID and build anonymized directory path
+                try:
+                    ds_temp = pydicom.dcmread(str(raw_path))
+                    mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
+                    accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
+                    row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
+                    patient_id_temp = str(row_temp['New_Patient_ID'])
+                    new_accession_temp = f"{patient_id_temp}_1"  # Placeholder for first pass
+                    
+                    # Rebuild output path with anonymized identifiers
+                    target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, new_accession_temp, parent_dir_map)
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Process with initial scan number
+                    success, patient_id = process_dicom(str(raw_path), str(target_path), mapping_df, log_path, 1)
+                    
+                    if success:
+                        # Update scan count and re-process with correct scan number
+                        patient_scan_count[patient_id] = patient_scan_count.get(patient_id, 0) + 1
+                        scan_number = patient_scan_count[patient_id]
+                        
+                        # Rebuild path with correct accession number
+                        new_accession_final = f"{patient_id}_{scan_number}"
+                        target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id, new_accession_final, parent_dir_map)
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        success, patient_id = process_dicom(str(raw_path), str(target_path), mapping_df, log_path, scan_number)
+                    
+                    if success:
+                        stats["success"] += 1
+                        stats["unique_patients"].add(patient_id)
+                    else:
+                        stats["fail"] += 1
+                except Exception as e:
+                    log_event(log_path, {'file': str(raw_path), 'mrn': 'ERR', 'id': 'ERR', 'offset': 'ERR', 'status': f"ERROR: {str(e)}"})
                     stats["fail"] += 1
 
     # Final Summary Report
