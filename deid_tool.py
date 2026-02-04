@@ -99,7 +99,7 @@ def _find_mapping_row(mapping_df, mrn_value, accession_value):
         f"No mapping found for MRN {mrn_value or 'N/A'} or Accession {accession_value or 'N/A'}"
     )
 
-def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, new_id, accession_map=None, match_status=None):
+def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, new_id, accession_map=None, match_status=None, level2_map=None):
     """
     Rebuild directory structure, preserving hierarchy but replacing:
     - MRN directory names with new_id
@@ -118,6 +118,7 @@ def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, n
     mrn_trusted = bool(match_status and match_status.startswith("mrn:"))
     print(f"      MRN={mrn}, Accession={accession}, new_id={new_id}, match_status={match_status}")
     print(f"      MRN trusted for dir match: {mrn_trusted}")
+    print(f"      Level-2 map available: {bool(level2_map)}")
     
     for i, part in enumerate(parts):
         original_part = part
@@ -126,9 +127,25 @@ def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, n
             new_parts.append(part)
             print(f"        [{i}] {original_part:20s} → {part:20s} (DICOM file)")
         # Check if part exactly matches MRN
-        elif mrn_trusted and mrn and part == str(mrn):
+        elif i == 0 and (mrn_trusted and mrn and part == str(mrn)):
             new_parts.append(new_id)
             print(f"        [{i}] {original_part:20s} → {new_id:20s} (MRN match)")
+        # Top-level patient directory (e.g., underscore name)
+        elif i == 0 and '_' in part and any(c.isalpha() for c in part):
+            new_parts.append(new_id)
+            print(f"        [{i}] {original_part:20s} → {new_id:20s} (Patient name pattern)")
+        # Second-level: always rename to new_id_N based on level2_map
+        elif i == 1 and level2_map and len(parts) > 1:
+            top_level = parts[0]
+            key = (top_level, part)
+            if key in level2_map:
+                mapped_level2 = f"{new_id}_{level2_map[key]}"
+                new_parts.append(mapped_level2)
+                print(f"        [{i}] {original_part:20s} → {mapped_level2:20s} (Level-2 map)")
+            else:
+                fallback_level2 = f"{new_id}_1"
+                new_parts.append(fallback_level2)
+                print(f"        [{i}] {original_part:20s} → {fallback_level2:20s} (Level-2 fallback)")
         # Check if part is an accession directory (use map if available)
         elif accession and part == str(accession) and accession_map and (new_id, str(accession)) in accession_map:
             mapped_accession = accession_map[(new_id, str(accession))]
@@ -296,6 +313,13 @@ def main():
     log_path = setup_logging(args.output)
     input_root = Path(args.input)
     
+    # Build level-2 directory map: (top_level_dir, child_dir) -> sequential index
+    level2_map = {}
+    for top_level in sorted([d for d in os.listdir(input_root) if (input_root / d).is_dir()]):
+        child_dirs = [d for d in os.listdir(input_root / top_level) if (input_root / top_level / d).is_dir()]
+        for idx, child in enumerate(sorted(child_dirs), start=1):
+            level2_map[(top_level, child)] = idx
+
     # Pre-scan: Build accession directory map per patient
     # This maps (new_patient_id, original_accession_dir) -> new_accession_number (new_id_1, new_id_2, etc)
     accession_map = {}
@@ -343,6 +367,7 @@ def main():
     print(f"Accession mappings created: {len(accession_map)}")
     print(f"Accession Map: {accession_map}")
     print(f"Patient accession counts: {patient_accession_count}")
+    print(f"Level-2 Directory Map: {level2_map}")
     print(f"==========================================\n")
     
     # Summary Counters
@@ -376,7 +401,7 @@ def main():
                     print(f"    Calling _rebuild_directory_path with:")
                     print(f"      input_file: {raw_path.relative_to(input_root)}")
                     print(f"      mrn={mrn_temp}, accession={accession_temp}, new_id={patient_id_temp}, match_status={status_temp}")
-                    target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, accession_map, status_temp)
+                    target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, accession_map, status_temp, level2_map)
                     print(f"    Result: {target_path.relative_to(output_root)}\n")
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     
