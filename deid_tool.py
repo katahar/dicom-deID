@@ -261,13 +261,31 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
         if notes_content:
             patient_comments = f"{patient_comments}\n{notes_content}"
         
+        # Helper function to bin patient age to nearest 5-year interval
+        def bin_age(age_str):
+            """Convert age to 5-year bin (e.g., 43 -> '040' for 40-44)"""
+            try:
+                age = int(age_str)
+                binned = (age // 5) * 5
+                return f"{binned:03d}"
+            except:
+                return ""
+        
         custom_rules = {
             (0x0010, 0x0010): lambda dataset, tag: new_id,           # PatientName
             (0x0010, 0x0020): lambda dataset, tag: new_id,           # PatientID
             (0x0008, 0x0020): lambda dataset, tag: shifted_date_str, # StudyDate
             (0x0008, 0x0021): lambda dataset, tag: shifted_date_str, # SeriesDate
             (0x0008, 0x0050): lambda dataset, tag: new_accession,    # AccessionNumber
-            (0x0010, 0x4000): lambda dataset, tag: patient_comments
+            (0x0010, 0x4000): lambda dataset, tag: patient_comments,
+            # Preserve these clinical/technical tags
+            (0x0008, 0x103E): lambda dataset, tag: getattr(ds, 'SeriesDescription', ''),      # SeriesDescription
+            (0x0008, 0x0060): lambda dataset, tag: getattr(ds, 'Modality', ''),               # Modality
+            (0x0018, 0x0015): lambda dataset, tag: getattr(ds, 'BodyPartExamined', ''),       # BodyPartExamined
+            (0x0018, 0x0010): lambda dataset, tag: getattr(ds, 'ContrastAgent', ''),          # ContrastAgent
+            (0x0020, 0x0012): lambda dataset, tag: getattr(ds, 'AcquisitionNumber', ''),      # AcquisitionNumber
+            (0x0010, 0x0040): lambda dataset, tag: getattr(ds, 'PatientSex', ''),             # PatientSex - preserve
+            (0x0010, 0x1010): lambda dataset, tag: bin_age(getattr(ds, 'PatientAge', ''))    # PatientAge - bin to 5-year interval
         }
 
         # 6. RUN ANONYMIZATION
@@ -281,6 +299,22 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
         ds.StudyDate = shifted_date_str
         ds.AccessionNumber = new_accession
         ds.PatientComments = patient_comments
+        
+        # Preserve clinical/technical tags
+        if hasattr(ds, 'SeriesDescription'):
+            ds.SeriesDescription = ds.SeriesDescription
+        if hasattr(ds, 'Modality'):
+            ds.Modality = ds.Modality
+        if hasattr(ds, 'BodyPartExamined'):
+            ds.BodyPartExamined = ds.BodyPartExamined
+        if hasattr(ds, 'ContrastAgent'):
+            ds.ContrastAgent = ds.ContrastAgent
+        if hasattr(ds, 'AcquisitionNumber'):
+            ds.AcquisitionNumber = ds.AcquisitionNumber
+        if hasattr(ds, 'PatientSex'):
+            ds.PatientSex = ds.PatientSex
+        if hasattr(ds, 'PatientAge'):
+            ds.PatientAge = bin_age(ds.PatientAge)
         
         ds.save_as(output_path)
         

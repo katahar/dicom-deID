@@ -85,20 +85,29 @@ Once the script starts, it will:
 
 **Anonymize**: Strip out the name and IDs, replacing them with the research ID from your CSV.
 
-**Assign Accession**: Generate a new Accession Number as `New_Patient_ID_ScanNumber` (e.g., `RS_01_1` for the first scan of patient RS_01).
+**Assign Accession**: Generate a new Accession Number as `New_Patient_ID_AccessionIndex` (e.g., `RS_01_1` for the first accession of patient RS_01).
 
 **Add Notes**: If a Notes column exists, embed the notes in the DICOM's PatientComments field (tagged with `IMPORT_NOTES:`) and save them to `notes.txt` in the output directory.
 
 **Time Shift**: Calculate how many days a scan was from the surgery and move that scan to the same relative position near your "Anchor Date."
 
+**Preserve Clinical Data**: Maintain the following clinically relevant tags while anonymizing identifiers:
+- SeriesDescription (scan type/name)
+- Modality (imaging type: CT, MR, US, etc.)
+- BodyPartExamined (anatomical region)
+- ContrastAgent (if contrast was used)
+- AcquisitionNumber (scan sequence number)
+- PatientSex (biological sex)
+- PatientAge (binned to 5-year intervals for privacy, e.g., age 43 → "040")
+
 **Log**: Create a file named deid_log_[date].csv in your output folder. This is your audit trail showing exactly what was processed.
 
-**Summary**: Display a final count of how many files were successfully cleaned.
+**Summary**: Display a final count of how many files were successfully cleaned, including pre-scan mapping details and directory transformations.
 
 ## 5. Directory Structure & Accession Numbering
 
 ### Input Structure
-The script preserves your complete directory hierarchy. It works with any folder organization:
+The script preserves your complete directory hierarchy. Directories are organized as: top-level (patient folders) and second-level (accession/session folders) with all deeper levels preserved.
 
 ```
 raw_input/
@@ -107,11 +116,14 @@ raw_input/
 │   │   ├── DICOM/
 │   │   │   └── file.dcm
 │   │   └── notes.txt
-│   └── Accession002/
-│       ├── DICOM/
-│       │   └── file.dcm
-│       └── SeriesInfo/
-│           └── metadata.txt
+│   ├── Accession002/
+│   │   ├── DICOM/
+│   │   │   └── file.dcm
+│   │   └── SeriesInfo/
+│   │       └── metadata.txt
+│   └── Other_Number/
+│       └── DICOM/
+│           └── file.dcm
 └── Patient002/
     └── Accession003/
         └── DICOM/
@@ -120,22 +132,25 @@ raw_input/
 ```
 
 ### Output Structure
-The output preserves the same hierarchy, but with anonymized identifiers:
+The output **preserves the same hierarchy**, but with anonymized directory names at top-level and second-level only:
 
 ```
 deid_output/
-├── RS_Vessel_01/           # Patient001 → RS_Vessel_01 (from New_Patient_ID)
-│   ├── RS_Vessel_01_1/     # Accession001 → RS_Vessel_01_1 (1st accession)
-│   │   ├── DICOM/
+├── RS_Vessel_01/           # Top-level: Patient001 → RS_Vessel_01 (from New_Patient_ID)
+│   ├── RS_Vessel_01_1/     # Second-level: Accession001 → RS_Vessel_01_1 (1st accession)
+│   │   ├── DICOM/          # Deeper levels preserved unchanged
 │   │   │   └── file.dcm
 │   │   └── notes.txt
-│   └── RS_Vessel_01_2/     # Accession002 → RS_Vessel_01_2 (2nd accession)
-│       ├── DICOM/
-│       │   └── file.dcm
-│       └── SeriesInfo/
-│           └── metadata.txt
-└── RS_Vessel_02/           # Patient002 → RS_Vessel_02
-    └── RS_Vessel_02_1/     # Accession003 → RS_Vessel_02_1
+│   ├── RS_Vessel_01_2/     # Second-level: Accession002 → RS_Vessel_01_2 (2nd accession)
+│   │   ├── DICOM/
+│   │   │   └── file.dcm
+│   │   └── SeriesInfo/     # Deeper levels preserved unchanged
+│   │       └── metadata.txt
+│   └── RS_Vessel_01_3/     # Second-level: Other_Number → RS_Vessel_01_3 (3rd session)
+│       └── DICOM/
+│           └── file.dcm
+└── RS_Vessel_02/           # Top-level: Patient002 → RS_Vessel_02
+    └── RS_Vessel_02_1/     # Second-level: Accession003 → RS_Vessel_02_1
         └── DICOM/
             ├── file1.dcm
             └── file2.dcm
@@ -143,7 +158,18 @@ deid_output/
 deid_log_20260204_144838.csv  # Audit trail
 ```
 
-### Accession Number Format
+### Directory Renaming Rules
+
+- **Top-level (Patient) directories**: Renamed to `New_Patient_ID` (e.g., RS_Vessel_01)
+- **Second-level (Accession/Session) directories**: Renamed to `New_Patient_ID_N` where N is sequential (1, 2, 3, ...) based on alphabetical order
+- **All deeper levels**: Preserved unchanged (DICOM/, SeriesInfo/, etc.)
+
+This applies to ALL second-level directories, including:
+- Actual accession number folders
+- "Other" session folders (not matching MRN/Accession)
+- Any other second-level organization
+
+### Accession Number Format (DICOM Tags)
 
 The tool generates accession numbers based on unique accession directories per patient:
 
@@ -155,11 +181,11 @@ The tool generates accession numbers based on unique accession directories per p
 | Max Length | 16 characters | DICOM SH VR limit; auto-truncated if longer |
 
 **How it works:**
-- First accession directory for a patient → `new_id_1`
-- Second accession directory for a patient → `new_id_2`
+- First unique accession directory → `new_id_1`
+- Second unique accession directory → `new_id_2`
 - And so on...
 
-This numbering is applied to:
+This accession numbering is applied to:
 - **DICOM PatientID tag**: `RS_Vessel_01`
 - **DICOM AccessionNumber tag**: `RS_Vessel_01_1` (truncated to 16 chars if needed)
 - **Output directory names**: `RS_Vessel_01_1/`, `RS_Vessel_01_2/`, etc.
