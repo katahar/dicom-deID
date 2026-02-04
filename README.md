@@ -95,6 +95,75 @@ Once the script starts, it will:
 
 **Summary**: Display a final count of how many files were successfully cleaned.
 
+## 5. Directory Structure & Accession Numbering
+
+### Input Structure
+The script preserves your complete directory hierarchy. It works with any folder organization:
+
+```
+raw_input/
+├── Patient001/
+│   ├── Accession001/
+│   │   ├── DICOM/
+│   │   │   └── file.dcm
+│   │   └── notes.txt
+│   └── Accession002/
+│       ├── DICOM/
+│       │   └── file.dcm
+│       └── SeriesInfo/
+│           └── metadata.txt
+└── Patient002/
+    └── Accession003/
+        └── DICOM/
+            ├── file1.dcm
+            └── file2.dcm
+```
+
+### Output Structure
+The output preserves the same hierarchy, but with anonymized identifiers:
+
+```
+deid_output/
+├── RS_Vessel_01/           # Patient001 → RS_Vessel_01 (from New_Patient_ID)
+│   ├── RS_Vessel_01_1/     # Accession001 → RS_Vessel_01_1 (1st accession)
+│   │   ├── DICOM/
+│   │   │   └── file.dcm
+│   │   └── notes.txt
+│   └── RS_Vessel_01_2/     # Accession002 → RS_Vessel_01_2 (2nd accession)
+│       ├── DICOM/
+│       │   └── file.dcm
+│       └── SeriesInfo/
+│           └── metadata.txt
+└── RS_Vessel_02/           # Patient002 → RS_Vessel_02
+    └── RS_Vessel_02_1/     # Accession003 → RS_Vessel_02_1
+        └── DICOM/
+            ├── file1.dcm
+            └── file2.dcm
+
+deid_log_20260204_144838.csv  # Audit trail
+```
+
+### Accession Number Format
+
+The tool generates accession numbers based on unique accession directories per patient:
+
+| Component | Example | Rules |
+|-----------|---------|-------|
+| Patient ID | RS_Vessel_01 | From New_Patient_ID column |
+| Accession Index | _1, _2, _3 | Sequential count of accessions per patient |
+| Format | RS_Vessel_01_1 | `{New_Patient_ID}_{AccessionIndex}` |
+| Max Length | 16 characters | DICOM SH VR limit; auto-truncated if longer |
+
+**How it works:**
+- First accession directory for a patient → `new_id_1`
+- Second accession directory for a patient → `new_id_2`
+- And so on...
+
+This numbering is applied to:
+- **DICOM PatientID tag**: `RS_Vessel_01`
+- **DICOM AccessionNumber tag**: `RS_Vessel_01_1` (truncated to 16 chars if needed)
+- **Output directory names**: `RS_Vessel_01_1/`, `RS_Vessel_01_2/`, etc.
+
 ## ⚠️ Troubleshooting & Tips
 
 **"File not found"**: Ensure your file paths don't have spaces in them, or wrap the path in quotes (e.g., "/Users/name/Desktop/My Folder").
