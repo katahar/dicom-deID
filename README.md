@@ -4,70 +4,103 @@ A researcher-friendly tool for anonymizing DICOM scans while maintaining longitu
 
 This tool takes raw medical scans (DICOM files) and "scrubs" them of personal information. It replaces patient names and IDs with a research code (e.g., RS_01) and shifts all dates to a "fake" timeline so you can still tell how many days passed between scans without knowing the actual dates.
 
-1. Prerequisites (One-time Setup)
+## 1. Prerequisites (One-time Setup)
+
 Before using the script, you need to install Python and the necessary "libraries" (plugins) that allow the script to read medical data.
 
-Install Python: Download and install Python from python.org.
+### Install Python
+Download and install Python from [python.org](https://www.python.org).
 
-Important: During installation, make sure to check the box that says "Add Python to PATH."
+**Important**: During installation, make sure to check the box that says "Add Python to PATH."
 
-Install Libraries: Open your computer's Terminal (Mac/Linux) or Command Prompt (Windows) and type the following command, then hit Enter:
+### Install Libraries
+Open your computer's Terminal (Mac/Linux) or Command Prompt (Windows) and type the following command, then hit Enter:
 
-Bash
+```bash
 pip install pydicom pandas dicom-anonymizer
-2. Preparing Your Data
-The script needs three things to work:
+```
+## 2. Preparing Your Data
 
-A. The "Mapping" CSV File
+The script needs two things to work:
+
+### A. The "Mapping" CSV File
 
 Create an Excel sheet and save it as a .csv file. This is your "key" to link real patients to research IDs.
 
-MRN	New_Patient_ID	Surgery_Date	Anchor_Date
-12345	RS_01	2025-01-10	2024-06-15
-67890	RS_02	2025-02-15	2024-06-15
-MRN: The original Patient ID found in the raw scans.
+| Column | Example | Description |
+|--------|---------|-------------|
+| MRN (or first column) | 12345 | The original Patient ID found in the raw scans. Can be in any column name. |
+| Accession (or second column) | ACC001 | The original Accession Number found in the raw scans. Can be in any column name. |
+| New_Patient_ID | RS_01 | The anonymous name you want to give them (e.g., RS_Vessel_01). |
+| Surgery_Date | 2025-01-10 | The actual date of their surgery (YYYY-MM-DD). |
+| Anchor_Date | 2024-06-15 | (Optional) The "fake" surgery date for your project. If left blank, it defaults to June 15, 2024. |
+| Notes | Study notes here | (Optional) Additional notes about the patient or scan. Will be embedded in DICOM metadata and saved as notes.txt. |
 
-New_Patient_ID: The anonymous name you want to give them (e.g., Patient_A).
+**Important:** If either MRN or Accession contains 5 or more underscores (e.g., `_____`), it will be treated as "no information provided" and the script will attempt to match using the other field.
 
-Surgery_Date: The actual date of their surgery (YYYY-MM-DD).
-
-Anchor_Date: (Optional) The "fake" surgery date for your project. If left blank, it defaults to June 15, 2024.
-
-B. The Raw Data Folder
+### B. The Raw Data Folder
 
 Put all your original patient folders into one main directory (e.g., a folder named Raw_Scans).
 
-3. How to Run the Script
-Save the script provided to you as a file named deid_tool.py.
+## 2b. Understanding the MRN/Accession Lookup Workflow
 
-Open your Terminal or Command Prompt.
+The script uses an intelligent fallback system to match patients from your DICOM files to your mapping CSV:
 
-Navigate to the folder where you saved the script using the cd command (e.g., cd Desktop/MyProject).
+1. **Primary MRN Lookup**: First, it tries to match the DICOM's PatientID against the first column of your CSV.
+2. **Accession Fallback**: If that fails, it tries to match the DICOM's AccessionNumber against the second column.
+3. **Flipped Accession Check**: If both fail, it checks if the MRN value is actually in the Accession column (columns were swapped).
+4. **Flipped MRN Check**: Finally, it checks if the Accession value is in the MRN column.
 
-Run the script using the following command format:
+This approach handles cases where:
+- You only have MRN or only have Accession Number
+- The MRN and Accession fields are swapped in your data
+- Either field contains `_____` (5+ underscores), treating it as missing data and using the other field
 
-Bash
+**Example**: If a DICOM has PatientID=`_____` and AccessionNumber=`12345`, the script will use the accession number to find the matching patient row.
+
+## 3. How to Run the Script
+
+1. Save the script provided to you as a file named `deid_tool.py`.
+2. Open your Terminal or Command Prompt.
+3. Navigate to the folder where you saved the script using the `cd` command (e.g., `cd Desktop/MyProject`).
+4. Run the script using the following command format:
+
+```bash
 python deid_tool.py --csv [PATH_TO_CSV] --input [PATH_TO_RAW_DATA] --output [PATH_FOR_CLEAN_DATA]
-Real World Example:
+```
 
-Bash
+### Real World Example
+
+```bash
 python deid_tool.py --csv mapping.csv --input ./Raw_Scans --output ./Anonymized_Data
-4. What Happens Next?
+```
+
+## 4. What Happens Next?
+
 Once the script starts, it will:
 
-Crawl: Search through every folder in your input directory for DICOM files.
+**Crawl**: Search through every folder in your input directory for DICOM files.
 
-Anonymize: Strip out the name and MRN, replacing them with the IDs from your CSV.
+**Match Patient**: Use the MRN/Accession lookup workflow (see section 2b) to find the corresponding patient in your CSV.
 
-Time Shift: Calculate how many days a scan was from the surgery and move that scan to the same relative position near your "Anchor Date."
+**Anonymize**: Strip out the name and IDs, replacing them with the research ID from your CSV.
 
-Log: Create a file named deid_log_[date].csv in your output folder. This is your audit trail showing exactly what was processed.
+**Assign Accession**: Generate a new Accession Number as `New_Patient_ID_ScanNumber` (e.g., `RS_01_1` for the first scan of patient RS_01).
 
-Summary: Display a final count of how many files were successfully cleaned.
+**Add Notes**: If a Notes column exists, embed the notes in the DICOM's PatientComments field (tagged with `IMPORT_NOTES:`) and save them to `notes.txt` in the output directory.
 
-⚠️ Troubleshooting & Tips
-"File not found": Ensure your file paths don't have spaces in them, or wrap the path in quotes (e.g., "/Users/name/Desktop/My Folder").
+**Time Shift**: Calculate how many days a scan was from the surgery and move that scan to the same relative position near your "Anchor Date."
 
-"MRN not found": If a scan's MRN isn't in your CSV, the script will skip that file and record an error in the log.
+**Log**: Create a file named deid_log_[date].csv in your output folder. This is your audit trail showing exactly what was processed.
 
-Private Tags: This script deletes "Private Tags" (extra data hidden by scanner manufacturers) to ensure maximum privacy for IRB compliance.
+**Summary**: Display a final count of how many files were successfully cleaned.
+
+## ⚠️ Troubleshooting & Tips
+
+**"File not found"**: Ensure your file paths don't have spaces in them, or wrap the path in quotes (e.g., "/Users/name/Desktop/My Folder").
+
+**"No mapping found"**: If a scan's MRN and Accession Number aren't in your CSV, or both contain `_____`, the script will skip that file and record an error in the log. Check the deid_log_[date].csv for details.
+
+**Swapped fields**: If your MRN and Accession columns are reversed compared to what the script expects, the script will detect this and match them correctly. However, it's clearer to label your columns properly.
+
+**Private Tags**: This script deletes "Private Tags" (extra data hidden by scanner manufacturers) to ensure maximum privacy for IRB compliance.
