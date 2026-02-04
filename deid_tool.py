@@ -113,27 +113,43 @@ def _rebuild_directory_path(raw_path, output_root, input_root, mrn, accession, n
     new_parts = []
     other_sesn_count = {}
     
+    # Debug: show the original path structure
+    print(f"      Original path parts: {parts}")
+    print(f"      MRN={mrn}, Accession={accession}, new_id={new_id}")
+    
     for i, part in enumerate(parts):
+        original_part = part
         # Check if this part is the filename (last part with .dcm)
         if part.lower().endswith('.dcm'):
             new_parts.append(part)
+            print(f"        [{i}] {original_part:20s} → {part:20s} (DICOM file)")
         # Check if part exactly matches MRN
         elif mrn and part == str(mrn):
             new_parts.append(new_id)
+            print(f"        [{i}] {original_part:20s} → {new_id:20s} (MRN match)")
         # Check if part is an accession directory (use map if available)
         elif accession and part == str(accession) and accession_map and (new_id, str(accession)) in accession_map:
-            new_parts.append(accession_map[(new_id, str(accession))])
+            mapped_accession = accession_map[(new_id, str(accession))]
+            new_parts.append(mapped_accession)
+            print(f"        [{i}] {original_part:20s} → {mapped_accession:20s} (Accession from map)")
         # Check if part is accession-like but not in map (fallback)
         elif accession and part == str(accession):
-            new_parts.append(f"{new_id}_1")
+            fallback_accession = f"{new_id}_1"
+            new_parts.append(fallback_accession)
+            print(f"        [{i}] {original_part:20s} → {fallback_accession:20s} (Accession fallback)")
         # Check if part looks like a patient name (contains underscores and alphanumerics)
         elif '_' in part and any(c.isalpha() for c in part):
             new_parts.append(new_id)
+            print(f"        [{i}] {original_part:20s} → {new_id:20s} (Patient name pattern)")
         # Keep all other parts as-is
         else:
             new_parts.append(part)
+            print(f"        [{i}] {original_part:20s} → {part:20s} (preserved as-is)")
     
-    return output_root / Path(*new_parts)
+    final_path = output_root / Path(*new_parts)
+    print(f"      Final output path: {final_path.relative_to(output_root)}")
+    
+    return final_path
 
 def _build_directory_map(input_root):
     """
@@ -283,19 +299,27 @@ def main():
     accession_map = {}
     patient_accession_count = {}
     
+    print(f"=== PRE-SCAN PHASE: Building Accession Directory Map ===")
+    file_count = 0
+    
     for root, _, files in os.walk(input_root):
         for file in files:
             if file.lower().endswith('.dcm'):
+                file_count += 1
                 raw_path = Path(root) / file
                 try:
                     ds_temp = pydicom.dcmread(str(raw_path))
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
                     
+                    print(f"  [{file_count}] {raw_path.relative_to(input_root)}")
+                    print(f"      MRN: {mrn_temp}, Accession: {accession_temp}")
+                    
                     if mrn_temp or accession_temp:
                         row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
                         if row_temp is not None:
                             new_id_temp = _clean_string(_get_column_case_insensitive(row_temp, 'New_Patient_ID'))
+                            print(f"      → New_Patient_ID: {new_id_temp}")
                             
                             # Track unique accession directories per patient
                             if accession_temp:
@@ -304,16 +328,26 @@ def main():
                                     if new_id_temp not in patient_accession_count:
                                         patient_accession_count[new_id_temp] = 0
                                     patient_accession_count[new_id_temp] += 1
-                                    accession_map[key] = f"{new_id_temp}_{patient_accession_count[new_id_temp]}"
-                except:
-                    pass
+                                    new_accession_num = f"{new_id_temp}_{patient_accession_count[new_id_temp]}"
+                                    accession_map[key] = new_accession_num
+                                    print(f"      → Mapping: {accession_temp} → {new_accession_num}")
+                                else:
+                                    print(f"      → Already mapped: {accession_temp} → {accession_map[key]}")
+                except Exception as e:
+                    print(f"  [{file_count}] ERROR reading {raw_path}: {str(e)}")
+    
+    print(f"\n=== Pre-scan Summary ===")
+    print(f"Total DICOM files scanned: {file_count}")
+    print(f"Accession mappings created: {len(accession_map)}")
+    print(f"Accession Map: {accession_map}")
+    print(f"Patient accession counts: {patient_accession_count}")
+    print(f"==========================================\n")
     
     # Summary Counters
     stats = {"success": 0, "fail": 0, "unique_patients": set()}
 
-    print(f"--- Starting Batch De-identification ---")
+    print(f"=== PROCESSING PHASE: De-identifying DICOM Files ===")
     print(f"Log File: {log_path}\n")
-    print(f"Accession Directory Map: {accession_map}\n")
 
     for root, _, files in os.walk(args.input):
         for file in files:
@@ -328,8 +362,20 @@ def main():
                     row_temp, _ = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
                     patient_id_temp = _clean_string(_get_column_case_insensitive(row_temp, 'New_Patient_ID'))
                     
+                    # Lookup accession number from map
+                    if (patient_id_temp, str(accession_temp)) in accession_map:
+                        new_accession_temp = accession_map[(patient_id_temp, str(accession_temp))]
+                        print(f"  {raw_path.name}: {mrn_temp}/{accession_temp} → {patient_id_temp}/{new_accession_temp}")
+                    else:
+                        new_accession_temp = f"{patient_id_temp}_1"
+                        print(f"  {raw_path.name}: {mrn_temp}/{accession_temp} → {patient_id_temp}/{new_accession_temp} (fallback)")
+                    
                     # Rebuild output path with accession map
+                    print(f"    Calling _rebuild_directory_path with:")
+                    print(f"      input_file: {raw_path.relative_to(input_root)}")
+                    print(f"      mrn={mrn_temp}, accession={accession_temp}, new_id={patient_id_temp}")
                     target_path = _rebuild_directory_path(raw_path, output_root, input_root, mrn_temp, accession_temp, patient_id_temp, accession_map)
+                    print(f"    Result: {target_path.relative_to(output_root)}\n")
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Process DICOM with file path
@@ -341,6 +387,7 @@ def main():
                     else:
                         stats["fail"] += 1
                 except Exception as e:
+                    print(f"  {raw_path.name}: ERROR - {str(e)}")
                     log_event(log_path, {'file': str(raw_path), 'mrn': 'ERR', 'id': 'ERR', 'offset': 'ERR', 'status': f"ERROR: {str(e)}"})
                     stats["fail"] += 1
 
