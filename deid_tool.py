@@ -279,6 +279,7 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
             (0x0008, 0x0050): lambda dataset, tag: new_accession,    # AccessionNumber
             (0x0010, 0x4000): lambda dataset, tag: patient_comments,
             # Preserve these clinical/technical tags
+            (0x0008, 0x1030): lambda dataset, tag: getattr(ds, 'StudyDescription', ''),       # StudyDescription
             (0x0008, 0x103E): lambda dataset, tag: getattr(ds, 'SeriesDescription', ''),      # SeriesDescription
             (0x0008, 0x0060): lambda dataset, tag: getattr(ds, 'Modality', ''),               # Modality
             (0x0018, 0x0015): lambda dataset, tag: getattr(ds, 'BodyPartExamined', ''),       # BodyPartExamined
@@ -301,6 +302,8 @@ def process_dicom(input_path, output_path, mapping_df, log_path, scan_number):
         ds.PatientComments = patient_comments
         
         # Preserve clinical/technical tags
+        if hasattr(ds, 'StudyDescription'):
+            ds.StudyDescription = ds.StudyDescription
         if hasattr(ds, 'SeriesDescription'):
             ds.SeriesDescription = ds.SeriesDescription
         if hasattr(ds, 'Modality'):
