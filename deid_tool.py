@@ -264,6 +264,8 @@ def main():
     
     start_time = time.time()
     mapping_df = pd.read_csv(args.csv)
+    # Strip whitespace from column names
+    mapping_df.columns = mapping_df.columns.str.strip()
     output_root = Path(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
     log_path = setup_logging(args.output)
