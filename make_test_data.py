@@ -24,7 +24,7 @@ def setup_test_environment():
     print(f"   PatientID: {ds.PatientID}")
     print(f"   AccessionNumber: {ds.AccessionNumber}")
     print(f"   StudyDate: {ds.StudyDate}")
-    print(f"   Expected output AccessionNumber: RSV0001_1")
+    print(f"   Expected output AccessionNumber: RS_Vessel_01_1")
     
     # Test Case 2: Accession-only lookup (MRN is underscores)
     print("\n=== Test Case 2: Accession number fallback (MRN has underscores) ===")
@@ -39,7 +39,7 @@ def setup_test_environment():
     print(f"   PatientID: {ds.PatientID} (will be ignored)")
     print(f"   AccessionNumber: {ds.AccessionNumber}")
     print(f"   StudyDate: {ds.StudyDate}")
-    print(f"   Expected output AccessionNumber: RSV0002_1")
+    print(f"   Expected output AccessionNumber: RS_Vessel_02_1")
     
     # Test Case 3: Multiple scans for same patient (to test scan numbering)
     print("\n=== Test Case 3: Multiple scans for same patient ===")
@@ -53,7 +53,7 @@ def setup_test_environment():
         ds.save_as(str(test_file_path))
         print(f"✅ Created: {test_file_path}")
         print(f"   StudyDate: {ds.StudyDate}")
-        print(f"   Expected output AccessionNumber: RSV0001_{scan_num}")
+        print(f"   Expected output AccessionNumber: RS_Vessel_01_{scan_num}")
     
     print("\n" + "="*60)
     print("Test environment setup complete!")
@@ -62,7 +62,7 @@ def setup_test_environment():
     print("\nExpected results:")
     print("  - 4 DICOM files should be processed")
     print("  - notes.txt should be created in output folders")
-    print("  - AccessionNumbers should follow pattern: Short_Prefix+Patient_Number_ScanNumber")
+    print("  - AccessionNumbers should follow pattern: New_Patient_ID_ScanNumber")
     print("="*60 + "\n")
 
 if __name__ == "__main__":
