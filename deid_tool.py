@@ -43,6 +43,14 @@ def _normalize_value(value):
         return None
     return value_str if value_str else None
 
+def _is_999_dose_report(ds):
+    """
+    Return True for vendor dose-report objects that should be excluded.
+    In this dataset, dose reports are emitted in series 999.
+    """
+    series_number = _normalize_value(getattr(ds, "SeriesNumber", None))
+    return series_number == "999"
+
 def _match_column(mapping_df, column, value):
     if value is None or column not in mapping_df.columns:
         return None
@@ -361,6 +369,7 @@ def main():
     # This maps (new_patient_id, original_accession_dir) -> new_accession_number (new_id_1, new_id_2, etc)
     accession_map = {}
     patient_accession_count = {}
+    prescan_skipped_999 = 0
     
     print(f"=== PRE-SCAN PHASE: Building Accession Directory Map ===")
     file_count = 0
@@ -372,6 +381,12 @@ def main():
                 raw_path = Path(root) / file
                 try:
                     ds_temp = pydicom.dcmread(str(raw_path))
+                    if _is_999_dose_report(ds_temp):
+                        prescan_skipped_999 += 1
+                        print(f"  [{file_count}] {raw_path.relative_to(input_root)}")
+                        print(f"      SKIP: Series 999 dose report (excluded from mapping)")
+                        continue
+
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
                     
@@ -401,6 +416,7 @@ def main():
     
     print(f"\n=== Pre-scan Summary ===")
     print(f"Total DICOM files scanned: {file_count}")
+    print(f"Series 999 dose reports skipped: {prescan_skipped_999}")
     print(f"Accession mappings created: {len(accession_map)}")
     print(f"Accession Map: {accession_map}")
     print(f"Patient accession counts: {patient_accession_count}")
@@ -408,7 +424,7 @@ def main():
     print(f"==========================================\n")
     
     # Summary Counters
-    stats = {"success": 0, "fail": 0, "unique_patients": set()}
+    stats = {"success": 0, "fail": 0, "skipped_999_dose_reports": 0, "unique_patients": set()}
 
     print(f"=== PROCESSING PHASE: De-identifying DICOM Files ===")
     print(f"Log File: {log_path}\n")
@@ -421,6 +437,18 @@ def main():
                 # Process DICOM file
                 try:
                     ds_temp = pydicom.dcmread(str(raw_path))
+                    if _is_999_dose_report(ds_temp):
+                        print(f"  {raw_path.name}: SKIPPED - Series 999 dose report")
+                        log_event(log_path, {
+                            'file': str(raw_path),
+                            'mrn': 'N/A',
+                            'id': 'N/A',
+                            'offset': 'N/A',
+                            'status': 'SKIPPED: SERIES_999_DOSE_REPORT'
+                        })
+                        stats["skipped_999_dose_reports"] += 1
+                        continue
+
                     mrn_temp = _normalize_value(getattr(ds_temp, "PatientID", None))
                     accession_temp = _normalize_value(getattr(ds_temp, "AccessionNumber", None))
                     row_temp, status_temp = _find_mapping_row(mapping_df, mrn_temp, accession_temp)
@@ -461,6 +489,7 @@ def main():
     print(f"Total Time:         {duration:.2f} seconds")
     print(f"Files Processed:    {stats['success']}")
     print(f"Files Failed:       {stats['fail']}")
+    print(f"Files Skipped 999:  {stats['skipped_999_dose_reports']}")
     print(f"Unique Patients:    {len(stats['unique_patients'])}")
     print(f"Output Directory:   {args.output}")
     print(f"--------------------------")

@@ -199,3 +199,39 @@ This accession numbering is applied to:
 **Swapped fields**: If your MRN and Accession columns are reversed compared to what the script expects, the script will detect this and match them correctly. However, it's clearer to label your columns properly.
 
 **Private Tags**: This script deletes "Private Tags" (extra data hidden by scanner manufacturers) to ensure maximum privacy for IRB compliance.
+
+## 6. Cleanup Script for Older Outputs (Series 999 Dose Reports)
+
+If you previously ran de-identification before the dose-report image masking patch, use `remove_999_dose_reports.py` to crop the identifying header area from those already de-identified dose reports.
+
+### Safe mode: write a cleaned copy
+
+```bash
+python remove_999_dose_reports.py --input ./old_deid_output --output ./old_deid_output_clean
+```
+
+### In-place mode: crop Series 999 files directly
+
+```bash
+python remove_999_dose_reports.py --input ./old_deid_output --in-place
+```
+
+### Dry run: preview changes without modifying files
+
+```bash
+python remove_999_dose_reports.py --input ./old_deid_output --output ./old_deid_output_clean --dry-run
+```
+
+### Parallel execution (faster on large datasets)
+
+```bash
+python remove_999_dose_reports.py --input ./old_deid_output --output ./old_deid_output_clean --workers 12
+```
+
+What it does:
+- Reads each `.dcm` file and checks `SeriesNumber`
+- Crops away the top 25% of image rows for files where `SeriesNumber == 999`
+- Preserves all other DICOMs and folder structure
+- Preserves non-DICOM files (for copy mode)
+- Writes a cleanup log CSV with actions and status
+- Processes files in parallel (`--workers`) for faster runtime on larger folders
